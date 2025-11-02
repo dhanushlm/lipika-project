@@ -1,0 +1,15 @@
+replicaCount: 2
+
+image:
+  repository: dhanushlm/devops
+  tag: "qa"
+  pullPolicy: IfNotPresent
+
+env:
+  - name: SPRING_PROFILES_ACTIVE
+    value: "qa"
+
+service:
+  type: ClusterIP
+  port: 8080
+

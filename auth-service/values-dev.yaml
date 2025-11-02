@@ -1,0 +1,15 @@
+replicaCount: 1
+
+image:
+  repository: dhanushlm/devops
+  tag: "dev"
+  pullPolicy: Always
+
+env:
+  - name: SPRING_PROFILES_ACTIVE
+    value: "dev"
+
+service:
+  type: ClusterIP
+  port: 8080
+

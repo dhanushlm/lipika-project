@@ -1,0 +1,15 @@
+replicaCount: 2
+
+image:
+  repository: dhanushlm/devops
+  tag: "preprod"
+  pullPolicy: IfNotPresent
+
+env:
+  - name: SPRING_PROFILES_ACTIVE
+    value: "preprod"
+
+service:
+  type: ClusterIP
+  port: 8080
+
