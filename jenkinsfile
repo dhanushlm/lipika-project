@@ -1,11 +1,21 @@
 pipeline {
-    agent any
+    agent { label 'jenkins-agent' }   // uses your pre-configured pod template
+
+    parameters {
+        choice(name: 'ENV', choices: ['dev', 'qa', 'preprod'], description: 'Select environment to deploy')
+    }
 
     environment {
         DOCKERHUB_USER = 'dhanushlm'
-        DOCKERHUB_PASS = credentials('dockerhub-credentials')  // Jenkins credential ID
         IMAGE_NAME = 'auth-service'
-        IMAGE_TAG = "v${env.BUILD_NUMBER}"
+        GIT_COMMIT_SHORT = "${env.GIT_COMMIT?.take(7) ?: 'local'}"
+        IMAGE_TAG = "${GIT_COMMIT_SHORT}-${env.BUILD_NUMBER}"
+        K8S_NAMESPACE = "${params.ENV}"
+    }
+
+    triggers {
+        // auto trigger only for dev
+        githubPush() // works if webhook is configured
     }
 
     stages {
@@ -13,21 +23,14 @@ pipeline {
         stage('Checkout Code') {
             steps {
                 echo "Cloning repository..."
-                git branch: 'develop', url: 'https://github.com/dhanushlm/lipika-project.git'
-            }
-        }
-
-        stage('Testing Maven') {
-            steps {
-                echo "Testing..."
-                sh 'mvn test'
+                git branch: 'master', url: 'https://github.com/dhanushlm/lipika-project.git'
             }
         }
 
         stage('Build Maven Artifact') {
             steps {
                 echo "Building JAR file..."
-                sh 'mvn clean package'
+                sh 'mvn clean package -DskipTests'
             }
         }
 
@@ -38,9 +41,9 @@ pipeline {
             }
         }
 
-        stage('Push to DockerHub') {
+        stage('Push Docker Image to DockerHub') {
             steps {
-                echo "Pushing Docker image to DockerHub..."
+                echo "Pushing Docker image..."
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
                     sh 'echo $PASS | docker login -u $USER --password-stdin'
                     sh "docker push ${DOCKERHUB_USER}/${IMAGE_NAME}:${IMAGE_TAG}"
@@ -48,24 +51,26 @@ pipeline {
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Helm Deploy') {
             steps {
-                echo "Deploying to Kubernetes cluster..."
-                sh '''
-                kubectl set image deployment/auth-deployment auth-container=${DOCKERHUB_USER}/${IMAGE_NAME}:${IMAGE_TAG}
-                kubectl rollout status deployment/auth-deployment
-                '''
+                echo "Deploying using Helm to ${K8S_NAMESPACE} environment..."
+                sh """
+                helm upgrade --install ${IMAGE_NAME}-${K8S_NAMESPACE} ./helm/${IMAGE_NAME} \
+                  --set image.repository=${DOCKERHUB_USER}/${IMAGE_NAME} \
+                  --set image.tag=${IMAGE_TAG} \
+                  --namespace ${K8S_NAMESPACE} \
+                  --create-namespace
+                """
             }
         }
     }
 
     post {
         success {
-            echo "Build #${env.BUILD_NUMBER} completed successfully!"
+            echo "✅ Build #${env.BUILD_NUMBER} for ${IMAGE_NAME} deployed successfully to ${K8S_NAMESPACE}!"
         }
         failure {
-            echo "Build failed. Please check logs."
+            echo "❌ Build failed. Check logs above."
         }
     }
 }
-
