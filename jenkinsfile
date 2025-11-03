@@ -1,70 +1,88 @@
 pipeline {
-    agent { label 'k8s-agent' }  // Or your configured label for K8s pod agent
+    agent { label 'k8s-agent' }
 
     parameters {
-        choice(name: 'ENV', choices: ['dev', 'qa', 'preprod'], description: 'Choose the environment to deploy')
+        choice(
+            name: 'DEPLOY_ENV',
+            choices: ['dev', 'qa', 'preprod'],
+            description: 'Select environment to deploy'
+        )
     }
 
     environment {
         DOCKERHUB_USER = 'dhanushlm'
+        DOCKERHUB_PASS = credentials('dockerhub-credentials')
         IMAGE_NAME = 'devops'
-        IMAGE_TAG = "v${env.BUILD_NUMBER}"
-        KUBE_CONFIG = credentials('kubeconfig-cred') // Jenkins credential (kubeconfig file)
-        DOCKERHUB_CREDS = credentials('dockerhub-credentials')
+        IMAGE_TAG = "v${BUILD_NUMBER}"
+        KUBECONFIG_CRED = credentials('k8s-token')
+        GIT_BRANCH = 'master'
     }
 
     triggers {
-        // Auto-trigger for dev environment only
+        // Webhook trigger - automatically triggers for dev when code is pushed to master
         githubPush()
     }
 
     stages {
         stage('Checkout Code') {
             steps {
-                echo "Cloning repository..."
-                git branch: 'master', url: 'https://github.com/dhanushlm/lipika-project.git'
+                echo "Cloning code from GitHub branch: ${env.GIT_BRANCH}"
+                git branch: env.GIT_BRANCH, url: 'https://github.com/dhanushlm/lipika-project.git'
             }
         }
 
-        stage('Build Maven Artifact') {
+        stage('Maven Build & Test') {
             steps {
-                echo "Building the JAR file..."
-                sh 'mvn clean package -DskipTests'
+                container('maven') {
+                    echo "Running Maven build and tests..."
+                    sh 'mvn clean package -DskipTests=false'
+                }
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 echo "Building Docker image..."
-                sh "docker build -t ${DOCKERHUB_USER}/${IMAGE_NAME}:${IMAGE_TAG} ."
-            }
-        }
-
-        stage('Push Docker Image to DockerHub') {
-            steps {
-                echo "Pushing Docker image..."
                 sh """
-                    echo ${DOCKERHUB_CREDS_PSW} | docker login -u ${DOCKERHUB_CREDS_USR} --password-stdin
-                    docker push ${DOCKERHUB_USER}/${IMAGE_NAME}:${IMAGE_TAG}
+                    docker build -t ${DOCKERHUB_USER}/${IMAGE_NAME}:${IMAGE_TAG} .
                 """
             }
         }
 
-        stage('Deploy via Helm') {
+        stage('Push Docker Image') {
             steps {
-                withCredentials([file(credentialsId: 'k8s-token', variable: 'KUBECONFIG')]) {
-                    script {
-                        def valuesFile = "auth-service/helm/auth-service/values-${params.ENV}.yaml"
+                echo "Pushing image to DockerHub..."
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
+                    sh 'echo $PASS | docker login -u $USER --password-stdin'
+                    sh "docker push ${DOCKERHUB_USER}/${IMAGE_NAME}:${IMAGE_TAG}"
+                }
+            }
+        }
 
-                        echo "Deploying ${params.ENV} environment using Helm..."
-                        sh """
-                            helm upgrade --install auth-service-${params.ENV} ./auth-service/helm/auth-service \
-                                --namespace ${params.ENV} \
-                                -f ${valuesFile} \
-                                --set image.repository=${DOCKERHUB_USER}/${IMAGE_NAME} \
-                                --set image.tag=${IMAGE_TAG}
-                        """
+        stage('Deploy with Helm') {
+            when {
+                anyOf {
+                    // Auto-deploy only if triggered by GitHub webhook (for dev)
+                    expression { 
+                        currentBuild.rawBuild.getCause(hudson.triggers.SCMTrigger.SCMTriggerCause) != null && params.DEPLOY_ENV == 'dev' 
                     }
+                    // Or manual trigger for QA/preprod
+                    expression { 
+                        currentBuild.rawBuild.getCause(hudson.model.Cause$UserIdCause) != null 
+                    }
+                }
+            }
+            steps {
+                echo "Deploying to ${params.DEPLOY_ENV} namespace using Helm..."
+
+                withCredentials([file(credentialsId: 'k8s-token', variable: 'KUBECONFIG_FILE')]) {
+                    sh '''
+                        export KUBECONFIG=$KUBECONFIG_FILE
+                        helm upgrade --install auth-service ./auth-service \
+                            --namespace ${DEPLOY_ENV} \
+                            --set image.repository=${DOCKERHUB_USER}/${IMAGE_NAME} \
+                            --set image.tag=${IMAGE_TAG}
+                    '''
                 }
             }
         }
@@ -72,10 +90,10 @@ pipeline {
 
     post {
         success {
-            echo "✅ Successfully deployed ${params.ENV} environment (Image: ${IMAGE_TAG})"
+            echo "✅ Build #${BUILD_NUMBER} succeeded for ${params.DEPLOY_ENV} environment!"
         }
         failure {
-            echo "❌ Build or deployment failed. Check logs."
+            echo "❌ Build failed. Check logs for details."
         }
     }
 }
