@@ -52,7 +52,7 @@ pipeline {
 
         stage('Deploy via Helm') {
             steps {
-                withCredentials([file(credentialsId: 'kubeconfig-cred', variable: 'KUBECONFIG')]) {
+                withCredentials([file(credentialsId: 'k8s-token', variable: 'KUBECONFIG')]) {
                     script {
                         def valuesFile = "auth-service/helm/auth-service/values-${params.ENV}.yaml"
 
