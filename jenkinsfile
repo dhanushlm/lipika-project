@@ -11,7 +11,7 @@ pipeline {
 
     environment {
         DOCKERHUB_USER = 'dhanushlm'
-        DOCKERHUB_PASS = credentials('dockerhub-credentials')
+        DOCKERHUB_PASS = credentials('dockerhub')
         IMAGE_NAME = 'devops'
         IMAGE_TAG = "v${BUILD_NUMBER}"
         KUBECONFIG_CRED = credentials('k8s-token')
@@ -52,7 +52,7 @@ pipeline {
         stage('Push Docker Image') {
             steps {
                 echo "Pushing image to DockerHub..."
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
                     sh 'echo $PASS | docker login -u $USER --password-stdin'
                     sh "docker push ${DOCKERHUB_USER}/${IMAGE_NAME}:${IMAGE_TAG}"
                 }
