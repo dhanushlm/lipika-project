@@ -33,7 +33,7 @@ pipeline {
 
         stage('Maven Build & Test') {
             steps {
-                container('maven') {
+                container('jnlp') {
                     echo "Running Maven build and tests..."
                     sh 'mvn clean package -DskipTests=false'
                 }
